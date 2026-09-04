@@ -1,32 +1,103 @@
 === AJAX Thumbnail Rebuild ===
 Contributors: ristoniinemets, junkcoder
 Donate link: http://breiti.cc/wordpress/ajax-thumbnail-rebuild/#donate
-Tags: ajax, thumbnail, rebuild, regenerate, admin, image, photo
+Tags: thumbnail, rebuild, regenerate, image, optimize
 Requires at least: 5.6
 Requires PHP: 7.4
 Tested up to: 7.1
-Stable tag: 2.0.0
+Stable tag: 2.1.0
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-[AJAX Thumbnail Rebuild](https://wordpress.org/plugins/ajax-thumbnail-rebuild/) allows you to rebuild all thumbnails at once without script timeouts on your server.
+Rebuild your media library one image at a time, without script timeouts - and optimise, replace, or write WebP and AVIF copies of your images.
 
 == Description ==
 
-AJAX Thumbnail Rebuild allows you to rebuild all thumbnails on your site. There are already some plugins available for this, but they have one thing in common: All thumbnails are rebuilt in a single step. This works fine when you don’t have that many photos on your site. When you have a lot of full-size photos, the script on the server side takes a long time to run. Unfortunately the time a script is allowed to run is limited, which sets an upper limit to the number of thumbnails you can regenerate. This number depends on the server configuration and the computing power your server has available. When you get over this limit, you won’t be able to rebuild your thumbnails.
+AJAX Thumbnail Rebuild recreates the resized copies WordPress makes of every image in your media library. It does them one image at a time, so a library of any size gets through without running into the script timeout that stops the plugins which rebuild everything in a single request.
 
-Why would you want to rebuild your thumbnails? Wordpress allows you to change the size of thumbnails. This way, you can make the size of thumbnails fit the design of your website. When you change the size to fit for a new theme, all future photos you are going to upload will have this new size. Your old thumbnails won’t be resized. That’s where this plugin comes into action. After changing the image sizes, you can rebuild all thumbnails. But instead of telling the server to recreate all thumbnails at once, they are rebuilt one after another. Rebuilding thumbnails for one photo won’t take all too long, so you won’t run into any script timeouts. Note that you still have to wait until all thumbnails have been rebuilt. If you close the page before the task is completed, you have to start all over again.
+You need this whenever the sizes change: a new theme with different dimensions, a plugin that registers a size of its own, or a size you have edited yourself. WordPress applies those to images uploaded afterwards and leaves everything already in the library at its old dimensions. Rebuilding fills the gap.
 
-You can also select the thumbnail sizes you want to rebuild, so that you don't need to recreate all images if you've just changed one thumbnail-size. You can also choose to only rebuild post thumbnails (featured images).
+On its screen under Tools you can:
+
+* Pick which of the registered sizes to rebuild, so a single changed size does not mean redoing all of them.
+* Rebuild only the images used as a featured image - which covers WooCommerce product images and product galleries - or only the file names matching a pattern, e.g. `banner-*.jpg`.
+* Watch it run: a progress bar, the image being worked on, a Stop button, and a list of anything it had to skip.
+* See every image size registered on the site with its dimensions and crop setting.
+* Clean up the resized files left behind by sizes that no longer exist.
+
+You can also work on one image at a time without leaving the media library: a row action rebuilds or optimises a single image, a bulk action hands a selection to the plugin's screen, and the attachment details panel - wherever it opens - rebuilds, optimises, or **replaces the file**. A replaced image keeps its id, title and address, so every post and product already pointing at it shows the new picture.
+
+Beyond rebuilding, each of these is off until you turn it on:
+
+* **Uploads.** How hard WordPress compresses the copies it writes, and how large an image may stay before it is scaled down.
+* **Optimising.** Makes files smaller without resizing them, using the optimisers installed on the server - jpegoptim, optipng, gifsicle, and pngquant where lossy PNG is allowed. Where a host has none, TinyPNG or ShortPixel can do the same job over their API. A file is replaced only when the new one is genuinely smaller.
+* **AVIF and WebP copies.** Written next to every image WordPress generates and served through a picture element, AVIF first, WebP after it, the original as the fallback - which works behind a page cache.
+* **Background processing.** Optimising and the copies are the slow half of an upload. Queue them instead, and the upload finishes as soon as the sizes are written - on Action Scheduler where the site has it, on WP-Cron where it does not.
+* **Image proxy.** Front end image URLs can be served through wsrv.nl, which resizes and re-encodes on the fly and serves the result from a CDN. Your own files are never touched.
+* **Sizes on demand.** An upload keeps only its own file, and each size is cut the first time something asks for it.
 
 This plugin requires JavaScript to be enabled.
-
 
 Contributions are welcome at [Github](https://github.com/breiti/ajax-thumbnail-rebuild)
 
 == Installation ==
 
-Upload the plugin to your blog, activate it, done. You can then rebuild all thumbnails in the tools section (Tools -> Rebuild Thumbnails).
+Upload the plugin to your blog, activate it, done. Everything is under Tools -> Rebuild Thumbnails: the rebuild screen itself, the registered sizes, cleanup, and a tab per group of settings.
+
+== Frequently Asked Questions ==
+
+= Does rebuilding change my original images? =
+
+No. A rebuild writes the resized copies again and leaves the file you uploaded as it is. The only setting that touches an original is "Also optimise the full size original" on the Optimising tab, and even then only the lossless programs run on it - never a re-encode.
+
+= What happens if I close the page while it is running? =
+
+It stops where it is. The images it had already got through keep their new copies and nothing is left half written, but the run does not carry on in the background - open the screen and start it again.
+
+= Optimising saved nothing on my images. Why? =
+
+Look at the Optimising tab: it lists which optimisers are installed on this server. Those re-pack a file rather than re-encode it, which is where the saving is. Where none of them is installed the plugin falls back to PHP's own image library, and since WordPress already wrote those files at that quality there is usually nothing left to win. On such a host, TinyPNG or ShortPixel will do the job over their API.
+
+= Uploading a batch of photographs is slow. Can that be fixed? =
+
+Turn on background processing, under Optimising. Optimising a file and writing its WebP and AVIF copies both happen while the browser is still waiting for the upload, and neither has to: with this on the upload finishes as soon as the resized copies are written, and the rest is queued. Action Scheduler runs the queue where a plugin provides it - WooCommerce and many others do - and WP-Cron runs it everywhere else. An image is served in its own format for the minute or two before the queue reaches it.
+
+= Is it safe to turn on AVIF or WebP copies? =
+
+Yes. The copies are extra files written next to your images; the originals stay exactly where they are, a copy that comes out larger than the original is thrown away, and the copies are deleted along with the attachment. Turning the setting back off puts the front end back to serving the originals. AVIF costs several times the processing WebP does, so expect uploads and rebuilds to take longer with it on, and where the server's image library cannot write AVIF the screen says so and the WebP copies go on being served.
+
+= Can it write the WebP and AVIF copies without serving them? =
+
+Yes, with one line of code. The screen has a single switch per format, but a filter separates the two, so the copies go on being written while the front end serves your originals - which is what you want when a CDN or the server itself hands the copies out:
+
+`add_filter( 'ajax_thumbnail_rebuild_serve_copies', '__return_false' );`
+
+= I turned on WebP or AVIF. Do I need to rebuild? =
+
+New uploads are converted as they arrive. For the images already in your library, run a rebuild once.
+
+= Can I replace an image with a different kind of file? =
+
+No - a JPEG can only be replaced by a JPEG, a PNG by a PNG. The attachment keeps its name and its address, which is what keeps every post and product already pointing at it working, and that only holds while the file type stays the same.
+
+= What does Cleanup delete? =
+
+Only resized files left on disk that no image size on this site refers to any more - what a removed theme or a size you no longer register leaves behind. It shows you the list and what it would free before anything is deleted, and the files your attachments actually use are never among them.
+
+= Does it need JavaScript? =
+
+Yes. The screen talks to the site over a REST API of its own, one image at a time, which is what keeps a large library from running into a script timeout.
 
 == Changelog ==
+
+= 2.1.0 =
+
+* New setting **When the work happens**, under Optimising: optimising and the WebP and AVIF copies can be queued instead of run on upload, so an upload finishes as soon as the resized copies are written. The queue runs on Action Scheduler where the site has it and on WP-Cron where it does not.
+* New filters `ajax_thumbnail_rebuild_background_enabled` and `ajax_thumbnail_rebuild_use_action_scheduler`.
+
+= 2.0.1 =
+
+* New filter `ajax_thumbnail_rebuild_serve_copies`. Return false to keep writing the WebP and AVIF copies while the front end serves the originals, for a site where a CDN or the server itself hands the copies out.
 
 = 2.0.0 =
 
@@ -190,9 +261,22 @@ Fixed:
 
 == Screenshots ==
 
-1. Plugin in action
+1. Rebuilding the library one image at a time, with a progress bar, the image being worked on, and a Stop button.
+2. Every image size registered on the site, with its dimensions and whether it crops.
+3. Rebuild or optimise a single image straight from the media library.
+4. Rebuild, optimise or replace an image from the attachment details, without leaving the page.
+5. Optimising, using the programs installed on the server - or TinyPNG or ShortPixel where there are none.
+6. AVIF and WebP copies of every generated image, served through a picture element.
 
 == Upgrade Notice ==
+
+= 2.1.0 =
+
+Optimising and the WebP/AVIF copies can now be queued instead of run on upload, so uploading a batch of photographs no longer waits for them. Off by default; turn it on under Optimising.
+
+= 2.0.1 =
+
+Adds a filter for sites that write the WebP and AVIF copies but serve them some other way. Nothing changes unless you use it.
 
 = 2.0.0 =
 
