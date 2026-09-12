@@ -2,10 +2,10 @@
 Contributors: ristoniinemets, junkcoder
 Donate link: http://breiti.cc/wordpress/ajax-thumbnail-rebuild/#donate
 Tags: thumbnail, rebuild, regenerate, image, optimize
-Requires at least: 5.6
+Requires at least: 5.7
 Requires PHP: 7.4
 Tested up to: 7.1
-Stable tag: 2.2.0
+Stable tag: 2.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -88,7 +88,27 @@ Only resized files left on disk that no image size on this site refers to any mo
 
 Yes. The screen talks to the site over a REST API of its own, one image at a time, which is what keeps a large library from running into a script timeout.
 
+= I use Advanced Custom Fields. Why do my sizes not say what they should? =
+
+An ACF image field hands back an array of every size the site registers, which is what it does unless you tell it otherwise - and to build that array it asks for all of them at once. With sizes waiting to be cut, that is a listing rather than a page asking to show a picture, and cutting ninety files inside a visitor's page view to answer it is worse than the upload this feature was meant to spare you.
+
+So nothing is cut while an ACF field is being read. The sizes already on disk are reported as usual; one that is still waiting is reported as the full file, which is what WordPress itself falls back to for a size that does not exist yet. Nothing else changes: the first time a template actually renders that size it is cut, exactly as before.
+
+If you read sizes out of that array - `$image['sizes']['my-size']` - ask the field for an ID instead and let WordPress draw the image:
+
+`'return_format' => 'id'` on the field, then `wp_get_attachment_image( $id, 'my-size' )`.
+
+To have it behave as it did before, cutting every size the moment such a field is read:
+
+`add_filter( 'ajax_thumbnail_rebuild_on_demand_while_enumerating', '__return_true' );`
+
 == Changelog ==
+
+= 2.2.1 =
+
+* Nothing is cut while something is only listing the sizes. Advanced Custom Fields hands an image field back as an array of every size the site registers - and a video or audio field the same array for its poster image - and every entry in those lists was answered by cutting the file for it - on a site with ninety-six registered sizes, one image field on one page wrote 240 files and took 29.5 seconds, inside a visitor's request. Inside that window the full file is returned instead, which is the honest answer while the size does not exist yet; the first time something actually renders one of those sizes it is cut exactly as before. `ajax_thumbnail_rebuild_on_demand_while_enumerating` puts the old behaviour back.
+* A size the original is too small for is no longer attempted. WordPress does not upscale, so the cut could only fail - but it failed the expensive way, after loading an image editor and reading the file, and again on the next page view for as long as anything asked for that size. It is worked out as arithmetic now, against the file the crop would actually be cut from. An SVG is skipped before any of that, rather than being rasterised once per registered size.
+* A size asked for after its record has gone is cut again. The note that keeps one request from cutting the same size twice was never taken down, so once a rebuild or `wp media regenerate` had rewritten the attachment metadata, anything asking for that size again was served the full file where it had asked for a crop.
 
 = 2.2.0 =
 
@@ -278,6 +298,10 @@ Fixed:
 6. AVIF and WebP copies of every generated image, served through a picture element.
 
 == Upgrade Notice ==
+
+= 2.2.1 =
+
+Three fixes to the sizes that wait to be asked for: nothing is cut while a plugin is only listing the registered sizes, which with Advanced Custom Fields could write hundreds of files inside a single page view; a size the original is too small for is no longer attempted; and a size whose record has gone - after a rebuild, say - is cut again instead of being refused. Only affects sites with Made on demand turned on.
 
 = 2.2.0 =
 
