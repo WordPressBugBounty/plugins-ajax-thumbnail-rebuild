@@ -15,8 +15,26 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class ATR_Optimizer {
 
-	/** Formats worth re-encoding. */
-	const MIMES = array( 'image/jpeg', 'image/png', 'image/webp' );
+	/** Formats the optimiser works on. */
+	const MIMES = array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' );
+
+	/**
+	 * Formats that go to the programs and the service only, and are never written
+	 * out again through the image editor.
+	 *
+	 * The editor keeps the first frame of an animated GIF and drops the rest, so
+	 * the fallback that re-encodes a file nothing else could shrink would turn an
+	 * animated banner into a still one. gifsicle re-packs every frame; that is
+	 * the only treatment a GIF gets.
+	 */
+	const NEVER_REENCODE = array( 'image/gif' );
+
+	/**
+	 * The formats the optimiser worked on before 2.3.0, for a mark that does not
+	 * say. GIF was not among them: those versions marked a GIF done without
+	 * touching it.
+	 */
+	const MIMES_BEFORE_2_3 = array( 'image/jpeg', 'image/png', 'image/webp' );
 
 	/** Anything below this is not worth the write, on a file of any size. */
 	const MIN_SAVING_BYTES = 512;
@@ -37,6 +55,32 @@ class ATR_Optimizer {
 
 	public static function is_enabled(): bool {
 		return (bool) apply_filters( 'ajax_thumbnail_rebuild_optimize_enabled', (bool) ATR_Settings::get( 'optimize_enabled' ) );
+	}
+
+	/**
+	 * Whether the optimiser does anything with this format at all.
+	 *
+	 * The one place that says so: the optimiser itself asks it before touching a
+	 * file, and anything that lists images worth optimising asks it too, so the
+	 * two can never disagree.
+	 *
+	 * A format that is never written out again depends on this server: with no
+	 * program for it and no service that takes it, nothing can make it smaller,
+	 * and listing it would put files at the top of the list that then save
+	 * nothing.
+	 *
+	 * @param string $mime Mime type.
+	 */
+	public static function optimizes( string $mime ): bool {
+		if ( ! in_array( $mime, self::MIMES, true ) ) {
+			return false;
+		}
+
+		if ( ! in_array( $mime, self::NEVER_REENCODE, true ) ) {
+			return true;
+		}
+
+		return (bool) ATR_Tools::programs_for( $mime, (bool) ATR_Settings::get( 'optimize_lossy' ) ) || ATR_Service::handles( $mime );
 	}
 
 	/**
@@ -93,7 +137,7 @@ class ATR_Optimizer {
 		   encoded at this quality would only degrade them for a few bytes. A rebuild
 		   clears the mark, because it writes the files afresh - and so does
 		   installing an optimiser the last pass did not have. */
-		if ( self::already_done( $metadata, $quality ) ) {
+		if ( self::already_done( $metadata, $quality, (string) get_post_mime_type( $attachment_id ) ) ) {
 			return array(
 				'metadata' => $metadata,
 				'saved'    => 0,
@@ -105,34 +149,12 @@ class ATR_Optimizer {
 
 		ATR_Regenerator::load_image_api();
 
-		$directory = trailingslashit( dirname( $file ) );
-		$saved     = 0;
-		$files     = 0;
+		$saved   = 0;
+		$files   = 0;
+		$archive = self::archive_path( $file, $metadata );
+		$mimes   = array();
 
-		$paths = array( $file );
-
-		foreach ( (array) ( $metadata['sizes'] ?? array() ) as $size ) {
-			if ( ! empty( $size['file'] ) ) {
-				$paths[] = $directory . $size['file'];
-			}
-		}
-
-		/* The untouched original is the archive copy, so it is left alone unless a
-		   site asks for it - and then only the lossless programs touch it: never a
-		   re-encode, never a lossy pass, never sent to a service. */
-		$archive = '';
-
-		if ( ATR_Settings::get( 'optimize_original' ) && ! empty( $metadata['original_image'] ) ) {
-			$archive = $directory . $metadata['original_image'];
-
-			if ( file_exists( $archive ) ) {
-				$paths[] = $archive;
-			}
-		}
-
-		$mimes = array();
-
-		foreach ( array_unique( $paths ) as $path ) {
+		foreach ( self::paths( $file, $metadata ) as $path ) {
 			$mime = file_exists( $path ) ? wp_get_image_mime( $path ) : '';
 
 			if ( $mime ) {
@@ -156,6 +178,8 @@ class ATR_Optimizer {
 			'quality' => $quality,
 			'tools'   => ATR_Tools::signature(),
 			'lossy'   => (bool) ATR_Settings::get( 'optimize_lossy' ),
+			// So a format the optimiser takes up later is not counted as done before it could be.
+			'mimes'   => self::MIMES,
 		);
 
 		return array(
@@ -168,15 +192,113 @@ class ATR_Optimizer {
 	}
 
 	/**
+	 * Every file of one attachment the optimiser works on, each once.
+	 *
+	 * The attached file, every size the metadata records, and the untouched
+	 * original where the site has asked for that too. Several sizes can come out
+	 * as the same file, which is optimised - and weighed - once. Whatever ranks
+	 * images by what optimising could win reads this same list, so the two
+	 * cannot drift apart.
+	 *
+	 * @param string $file     Path of the attached file.
+	 * @param array  $metadata Attachment metadata.
+	 * @return string[] Absolute paths.
+	 */
+	public static function paths( string $file, array $metadata ): array {
+		$directory = trailingslashit( dirname( $file ) );
+		$paths     = array( $file );
+
+		foreach ( (array) ( $metadata['sizes'] ?? array() ) as $size ) {
+			if ( is_array( $size ) && ! empty( $size['file'] ) ) {
+				$paths[] = $directory . $size['file'];
+			}
+		}
+
+		$archive = self::archive_path( $file, $metadata );
+
+		if ( '' !== $archive ) {
+			$paths[] = $archive;
+		}
+
+		return array_values( array_unique( $paths ) );
+	}
+
+	/**
+	 * The untouched original, when the site wants it optimised and it is there.
+	 *
+	 * It is the archive copy, so it is left alone unless a site asks for it - and
+	 * then only the lossless programs touch it: never a re-encode, never a lossy
+	 * pass, never sent to a service.
+	 *
+	 * @param string $file     Path of the attached file.
+	 * @param array  $metadata Attachment metadata.
+	 * @return string Empty when it is not one of the files to work on.
+	 */
+	private static function archive_path( string $file, array $metadata ): string {
+		if ( ! ATR_Settings::get( 'optimize_original' ) || empty( $metadata['original_image'] ) ) {
+			return '';
+		}
+
+		$archive = trailingslashit( dirname( $file ) ) . $metadata['original_image'];
+
+		return file_exists( $archive ) ? $archive : '';
+	}
+
+	/**
+	 * Whether the optimiser would do anything with this attachment now.
+	 *
+	 * The inverse of the mark it leaves, read against today's settings: an image
+	 * optimised at a lower quality, without a program installed since, or without
+	 * lossy compression that has since been turned on, needs it again - and so
+	 * does one in a format the optimiser did not handle when it left the mark.
+	 *
+	 * @param array  $metadata Attachment metadata.
+	 * @param string $mime     The attachment's mime type.
+	 */
+	public static function needs_optimizing( array $metadata, string $mime ): bool {
+		return ! self::already_done( $metadata, (int) ATR_Settings::get( 'optimize_quality', ATR_Uploads::CORE_QUALITY ), $mime );
+	}
+
+	/**
+	 * Optimise one attachment and keep what came of it.
+	 *
+	 * The metadata is written only when the attachment was worked on: a missing
+	 * file leaves it as it was.
+	 *
+	 * @param int $attachment_id Attachment id.
+	 * @return array{metadata:array,saved:int,files:int,message:string,reason:string}
+	 */
+	public static function optimize_and_store( int $attachment_id ): array {
+		$result = self::optimize_attachment( $attachment_id );
+
+		if ( '' === $result['message'] ) {
+			wp_update_attachment_metadata( $attachment_id, $result['metadata'] );
+		}
+
+		return $result;
+	}
+
+	/**
 	 * Whether this attachment has already been through exactly this treatment.
 	 *
-	 * @param array $metadata Attachment metadata.
-	 * @param int   $quality  Quality it would be optimised at now.
+	 * @param array  $metadata Attachment metadata.
+	 * @param int    $quality  Quality it would be optimised at now.
+	 * @param string $mime     The attachment's mime type.
 	 */
-	private static function already_done( array $metadata, int $quality ): bool {
+	private static function already_done( array $metadata, int $quality, string $mime ): bool {
 		$mark = $metadata[ self::DONE_KEY ] ?? null;
 
 		if ( null === $mark || $quality <= 0 ) {
+			return false;
+		}
+
+		/* A mark only speaks for the formats the optimiser worked on when it was
+		   left. Before 2.3.0 a GIF was marked done untouched; that mark says nothing
+		   about what gifsicle could do with it now. A JPEG's old mark still holds -
+		   optimising it again would re-encode a lossy file for a few bytes. */
+		$handled = is_array( $mark ) && isset( $mark['mimes'] ) ? (array) $mark['mimes'] : self::MIMES_BEFORE_2_3;
+
+		if ( ! in_array( $mime, $handled, true ) ) {
 			return false;
 		}
 
@@ -242,9 +364,9 @@ class ATR_Optimizer {
 			return 0;
 		}
 
-		$mime = wp_get_image_mime( $path );
+		$mime = (string) wp_get_image_mime( $path );
 
-		if ( ! in_array( $mime, self::MIMES, true ) ) {
+		if ( ! self::optimizes( $mime ) ) {
 			return 0;
 		}
 
@@ -268,7 +390,7 @@ class ATR_Optimizer {
 		   re-encoding it, which is both a real saving and not lossy. */
 		$gain = self::run_tools( $path, $mime, $before, $lossless_only );
 
-		if ( $gain > 0 || $lossless_only ) {
+		if ( $gain > 0 || $lossless_only || in_array( $mime, self::NEVER_REENCODE, true ) ) {
 			return $gain;
 		}
 

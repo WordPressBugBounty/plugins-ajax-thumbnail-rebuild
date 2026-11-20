@@ -3,7 +3,7 @@
  * Plugin name: AJAX Thumbnail Rebuild
  * Plugin URI: https://wordpress.org/plugins/ajax-thumbnail-rebuild/
  * Author: ristoniinemets, junkcoder
- * Version: 2.2.1
+ * Version: 2.3.0
  * Description: Rebuild the thumbnails of your media library one image at a time, without running into script timeouts.
  * Requires at least: 5.7
  * Requires PHP: 7.4
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'ATR_VERSION', '2.2.1' );
+define( 'ATR_VERSION', '2.3.0' );
 define( 'ATR_FILE', __FILE__ );
 define( 'ATR_PATH', plugin_dir_path( __FILE__ ) );
 define( 'ATR_URL', plugin_dir_url( __FILE__ ) );
@@ -39,11 +39,18 @@ require_once ATR_PATH . 'includes/class-atr-cleanup.php';
 require_once ATR_PATH . 'includes/class-atr-replace.php';
 require_once ATR_PATH . 'includes/class-atr-media-library.php';
 require_once ATR_PATH . 'includes/class-atr-attachments.php';
+require_once ATR_PATH . 'includes/class-atr-largest.php';
 require_once ATR_PATH . 'includes/class-atr-regenerator.php';
 require_once ATR_PATH . 'includes/class-atr-rest-controller.php';
 require_once ATR_PATH . 'includes/class-atr-admin-page.php';
 require_once ATR_PATH . 'includes/class-atr-plugin.php';
 require_once ATR_PATH . 'includes/deprecated.php';
+
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+	require_once ATR_PATH . 'includes/class-atr-cli.php';
+
+	WP_CLI::add_command( 'atr', 'ATR_CLI' );
+}
 
 /**
  * Main plugin instance.
